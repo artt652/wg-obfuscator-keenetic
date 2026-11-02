@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs on removal: stop both services. Config files are left in place.
+
+/opt/etc/init.d/S98wg-obfuscator-panel stop >/dev/null 2>&1
+/opt/etc/init.d/S99wg-obfuscator stop >/dev/null 2>&1
+
+exit 0

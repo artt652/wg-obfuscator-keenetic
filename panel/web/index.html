@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>wg-obfuscator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23137a5f'/%3E%3Cpath d='M8 11h16M8 16h10M8 21h16' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<section id="login" class="login" hidden>
+  <form id="login-form" class="login-card" autocomplete="on">
+    <div class="brand"><span class="mark" aria-hidden="true"></span>wg-obfuscator</div>
+    <p class="muted">Панель управления обфускатором на роутере</p>
+    <label for="login-pw">Пароль</label>
+    <input id="login-pw" type="password" autocomplete="current-password" required autofocus>
+    <button class="btn primary wide" type="submit">Войти</button>
+    <p id="login-err" class="err" role="alert"></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true"></span>wg-obfuscator</div>
+    <div class="state" id="state-pill"><span class="dot"></span><span id="state-text">…</span></div>
+    <div class="top-actions">
+      <button class="btn" data-svc="start" id="btn-start">Старт</button>
+      <button class="btn" data-svc="restart" id="btn-restart">Перезапуск</button>
+      <button class="btn" data-svc="stop" id="btn-stop">Стоп</button>
+      <button class="btn ghost" id="btn-logout" title="Выйти" aria-label="Выйти">⎋</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Обзор</button>
+    <button role="tab" data-tab="settings" aria-selected="false">Настройки</button>
+    <button role="tab" data-tab="log" aria-selected="false">Журнал</button>
+  </nav>
+
+  <main>
+    <!-- Overview -->
+    <section id="tab-overview" class="tab">
+      <div id="banner" class="banner" hidden></div>
+      <div class="grid stats">
+        <div class="stat"><div class="stat-label">Состояние</div><div class="stat-value" id="ov-state">—</div></div>
+        <div class="stat"><div class="stat-label">Работает</div><div class="stat-value" id="ov-uptime">—</div></div>
+        <div class="stat"><div class="stat-label">Версия</div><div class="stat-value" id="ov-version">—</div></div>
+        <div class="stat"><div class="stat-label">Процессы</div><div class="stat-value" id="ov-procs">—</div></div>
+      </div>
+
+      <h2>Экземпляры</h2>
+      <div id="ov-instances" class="cards"></div>
+
+      <h2>WireGuard</h2>
+      <p id="wg-hint" class="muted small" hidden></p>
+      <div id="ov-wg" class="cards"></div>
+    </section>
+
+    <!-- Settings -->
+    <section id="tab-settings" class="tab" hidden>
+      <div class="toolbar">
+        <div class="seg" role="group" aria-label="Режим">
+          <button id="mode-form" class="seg-btn on">Форма</button>
+          <button id="mode-raw" class="seg-btn">Текст</button>
+        </div>
+        <button class="btn" id="btn-import">Импорт с сервера</button>
+      </div>
+
+      <div id="form-mode">
+        <div class="inst-tabs" id="inst-tabs"></div>
+        <form id="inst-form" class="panel" novalidate>
+          <div class="fields">
+            <div class="f">
+              <label for="f-name">Имя секции</label>
+              <input id="f-name" data-k="name" required>
+            </div>
+            <div class="f">
+              <label for="f-sourceLport">Локальный порт</label>
+              <input id="f-sourceLport" data-k="sourceLport" inputmode="numeric" placeholder="13255" required>
+              <small>Сюда подключается WireGuard: Endpoint 127.0.0.1:порт</small>
+            </div>
+            <div class="f">
+              <label for="f-sourceIf">Адрес прослушивания</label>
+              <input id="f-sourceIf" data-k="sourceIf" placeholder="127.0.0.1">
+              <small>127.0.0.1 — только внутри роутера. Пусто — все интерфейсы</small>
+            </div>
+            <div class="f full">
+              <label for="f-target">Сервер (обфускатор на VPS)</label>
+              <input id="f-target" data-k="target" placeholder="203.0.113.5:17379" required>
+            </div>
+            <div class="f full">
+              <label for="f-key">Ключ</label>
+              <div class="with-btn">
+                <input id="f-key" data-k="key" type="password" autocomplete="off" spellcheck="false" required>
+                <button type="button" class="btn ghost" id="toggle-key">Показать</button>
+              </div>
+              <small>Должен совпадать с ключом на сервере. Без символов # и =</small>
+            </div>
+            <div class="f">
+              <label for="f-masking">Маскировка</label>
+              <select id="f-masking" data-k="masking">
+                <option value="">AUTO (по умолчанию)</option>
+                <option value="STUN">STUN</option>
+                <option value="NONE">NONE</option>
+                <option value="AUTO">AUTO (явно)</option>
+              </select>
+              <small>Клиенту обычно нужен STUN, если сервер так настроен</small>
+            </div>
+            <div class="f">
+              <label for="f-verbose">Уровень журнала</label>
+              <select id="f-verbose" data-k="verbose">
+                <option value="">INFO (по умолчанию)</option>
+                <option value="ERROR">ERROR</option>
+                <option value="WARN">WARN</option>
+                <option value="INFO">INFO</option>
+                <option value="DEBUG">DEBUG</option>
+                <option value="TRACE">TRACE</option>
+              </select>
+              <small>ERROR или WARN — быстрее всего</small>
+            </div>
+            <div class="f full">
+              <label for="f-logFile">Файл журнала</label>
+              <input id="f-logFile" data-k="logFile" placeholder="/opt/var/log/wg-obfuscator.log">
+              <small>Без файла журнал не сохраняется: служба отбрасывает вывод</small>
+            </div>
+          </div>
+
+          <details class="more">
+            <summary>Дополнительно</summary>
+            <div class="fields">
+              <div class="f">
+                <label for="f-inTimeout">in-timeout, с</label>
+                <input id="f-inTimeout" data-k="inTimeout" inputmode="numeric" placeholder="выкл.">
+                <small>Новая сессия с новым портом, если сервер молчит</small>
+              </div>
+              <div class="f">
+                <label for="f-resolveInterval">resolve-interval, с</label>
+                <input id="f-resolveInterval" data-k="resolveInterval" inputmode="numeric" placeholder="0">
+                <small>Для домена или DDNS в адресе сервера, например 300</small>
+              </div>
+              <div class="f">
+                <label for="f-maxDummy">max-dummy, байт</label>
+                <input id="f-maxDummy" data-k="maxDummy" inputmode="numeric" placeholder="4">
+                <small>0 — без случайных байтов, чуть быстрее</small>
+              </div>
+              <div class="f">
+                <label for="f-idleTimeout">idle-timeout, с</label>
+                <input id="f-idleTimeout" data-k="idleTimeout" inputmode="numeric" placeholder="300">
+              </div>
+              <div class="f">
+                <label for="f-maxClients">max-clients</label>
+                <input id="f-maxClients" data-k="maxClients" inputmode="numeric" placeholder="1024">
+              </div>
+              <div class="f">
+                <label for="f-fwmark">fwmark</label>
+                <input id="f-fwmark" data-k="fwmark" placeholder="выкл.">
+              </div>
+              <div class="f">
+                <label for="f-logTimestamps">Метки времени</label>
+                <select id="f-logTimestamps" data-k="logTimestamps">
+                  <option value="">AUTO (по умолчанию)</option>
+                  <option value="TRUE">TRUE</option>
+                  <option value="FALSE">FALSE</option>
+                </select>
+              </div>
+              <div class="f check">
+                <label><input type="checkbox" id="f-allowClean" data-k="allowClean"> allow-clean (только сервер)</label>
+              </div>
+              <div class="f full">
+                <label for="f-staticBindings">static-bindings, по одной на строку</label>
+                <textarea id="f-staticBindings" data-k="staticBindings" rows="3" spellcheck="false" placeholder="1.2.3.4:12883:6670"></textarea>
+              </div>
+            </div>
+          </details>
+
+          <div class="form-foot">
+            <button type="button" class="btn danger ghost" id="btn-del-inst">Удалить секцию</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="raw-mode" hidden>
+        <textarea id="raw-text" class="code" rows="18" spellcheck="false" aria-label="Текст конфигурации"></textarea>
+        <p class="muted small">Неизвестные параметры, # и = в значениях проверяются до записи — с ними v1.6 не запустится.</p>
+      </div>
+
+      <div id="save-msg" class="msg" role="status" hidden></div>
+
+      <div class="savebar">
+        <button class="btn" id="btn-save">Сохранить</button>
+        <button class="btn primary" id="btn-save-restart">Сохранить и перезапустить</button>
+      </div>
+
+      <h2>Панель</h2>
+      <form id="pw-form" class="panel small-form">
+        <div class="fields">
+          <div class="f"><label for="pw-old">Текущий пароль</label><input id="pw-old" type="password" autocomplete="current-password" required></div>
+          <div class="f"><label for="pw-new">Новый пароль</label><input id="pw-new" type="password" autocomplete="new-password" minlength="6" required></div>
+        </div>
+        <div class="form-foot"><button class="btn" type="submit">Сменить пароль</button><span id="pw-msg" class="muted small"></span></div>
+      </form>
+    </section>
+
+    <!-- Log -->
+    <section id="tab-log" class="tab" hidden>
+      <div class="toolbar">
+        <label class="inline"><input type="checkbox" id="log-follow" checked> Обновлять</label>
+        <select id="log-lines" aria-label="Строк">
+          <option value="100">100 строк</option>
+          <option value="300" selected>300 строк</option>
+          <option value="1000">1000 строк</option>
+        </select>
+        <button class="btn ghost" id="btn-log-clear">Очистить</button>
+      </div>
+      <p id="log-path" class="muted small"></p>
+      <pre id="log-box" class="log" tabindex="0"></pre>
+    </section>
+  </main>
+
+  <footer class="foot muted small" id="foot"></footer>
+</div>
+
+<dialog id="dlg-import">
+  <form method="dialog" class="dlg">
+    <h3>Импорт конфигурации с сервера</h3>
+    <p class="muted small">Вставьте конфиг клиента, который выдал сервер (WireGuard Obfuscator Easy или другой). Адрес прослушивания и файл журнала для роутера подставятся сами.</p>
+    <textarea id="import-text" class="code" rows="10" spellcheck="false" placeholder="[main]&#10;source-lport = 13255&#10;target = 203.0.113.5:17379&#10;key = ...&#10;masking = STUN"></textarea>
+    <label class="inline"><input type="checkbox" id="import-replace"> Заменить все секции (иначе — только текущую)</label>
+    <p id="import-err" class="err"></p>
+    <div class="dlg-foot">
+      <button value="cancel" class="btn ghost">Отмена</button>
+      <button id="import-do" value="default" class="btn primary">Подставить</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+#!/bin/sh
+
+CONF=/opt/etc/wg-obfuscator.conf
+FLAG=/opt/var/run/wg-obfuscator.was-running
+
+mkdir -p /opt/var/log /opt/var/run
+
+# Keep an existing config; create one from the template on a fresh install.
+if [ ! -f "$CONF" ]; then
+	cp /opt/share/wg-obfuscator/wg-obfuscator.conf.example "$CONF"
+fi
+chmod 600 "$CONF"
+
+# v1.6 rejects the README spellings WARNINGS/ERRORS: fix them in place.
+sed -i -E \
+	-e 's/^([[:space:]]*verbose[[:space:]]*=[[:space:]]*)[Ww][Aa][Rr][Nn][Ii][Nn][Gg][Ss]?[[:space:]]*$/\1WARN/' \
+	-e 's/^([[:space:]]*verbose[[:space:]]*=[[:space:]]*)[Ee][Rr][Rr][Oo][Rr][Ss][[:space:]]*$/\1ERROR/' \
+	"$CONF"
+
+# Panel settings with a random password (only when missing).
+/opt/bin/wg-obfuscator-panel -init
+
+/opt/etc/init.d/S98wg-obfuscator-panel start >/dev/null 2>&1
+
+# Restart the obfuscator if it was running, or if the config is filled in.
+if [ -f "$FLAG" ] || { grep -Eq '^[[:space:]]*target[[:space:]]*=' "$CONF" && grep -Eq '^[[:space:]]*key[[:space:]]*=' "$CONF"; }; then
+	/opt/etc/init.d/S99wg-obfuscator start >/dev/null 2>&1
+fi
+rm -f "$FLAG"
+
+exit 0

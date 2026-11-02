@@ -1,0 +1,66 @@
+name: Build packages
+
+# On every push: build .ipk for all architectures and run the Go tests.
+# On a tag v*: also attach the packages to a GitHub release and publish the
+# opkg feed to GitHub Pages (Settings → Pages → Source: GitHub Actions).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Vet and test the panel
+        working-directory: panel
+        run: |
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go vet ./...
+
+      - name: Build packages
+        run: ./pkg/build-ipk.sh
+
+      - name: Build opkg feed
+        run: ./pkg/make-feed.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: pkg/out/*.ipk
+
+      - uses: actions/upload-pages-artifact@v3
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          path: dist
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pkg/out/*.ipk
+
+  pages:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

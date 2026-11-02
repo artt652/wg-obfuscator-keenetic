@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stop running binaries before opkg overwrites them ("Text file busy"),
+# and remember whether the obfuscator was running so postinst can restore it.
+
+mkdir -p /opt/var/run
+
+if [ -x /opt/etc/init.d/S98wg-obfuscator-panel ]; then
+	/opt/etc/init.d/S98wg-obfuscator-panel stop >/dev/null 2>&1
+fi
+killall wg-obfuscator-panel >/dev/null 2>&1
+
+if pidof wg-obfuscator >/dev/null 2>&1; then
+	touch /opt/var/run/wg-obfuscator.was-running
+	killall wg-obfuscator >/dev/null 2>&1
+	sleep 1
+fi
+
+exit 0

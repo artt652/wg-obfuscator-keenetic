@@ -1,0 +1,16 @@
+# wg-obfuscator configuration (v1.6)
+# Edit in the web panel or by hand, then restart:
+#   /opt/etc/init.d/S99wg-obfuscator restart
+#
+# verbose accepts ERROR, WARN, INFO, DEBUG, TRACE (not WARNINGS/ERRORS).
+# in-timeout must be greater than 0 or left out.
+# '#' starts a comment anywhere on a line, so keys cannot contain '#' or '='.
+
+[main]
+source-if = 127.0.0.1
+source-lport = 13255
+# target = IP_VPS:PORT
+# key = KEY_FROM_SERVER
+masking = STUN
+verbose = WARN
+log-file = /opt/var/log/wg-obfuscator.log
