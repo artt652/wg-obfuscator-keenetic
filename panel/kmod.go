@@ -23,7 +23,6 @@ const (
 	kmodState = "/tmp/wgobfs-swap"
 	kmodMode  = kmodDir + "/wgobfs-mode.sh"
 	kmodTun   = "/opt/etc/wgobfs-tunnels.conf"
-	stockSrc  = "F35D0ABE44EBEF40C2FE6D1"
 )
 
 type KmodTunnel struct {
@@ -54,7 +53,8 @@ type KmodTunnel struct {
 }
 
 type KmodStatus struct {
-	Installed      bool         `json:"installed"` // bundle in /opt/lib/wgobfs
+	Installed      bool         `json:"installed"` // package wgobfs-kmod in /opt/lib/wgobfs
+	Fits           bool         `json:"fits"`      // it has a module for this firmware
 	Module         string       `json:"module"`    // patched | stock | other | none
 	Srcversion     string       `json:"srcversion"`
 	GenlID         int          `json:"genlId"`
@@ -154,7 +154,8 @@ func kernelModes() map[string]string {
 
 func kmodStatus() KmodStatus {
 	st := KmodStatus{
-		Installed:     exists(kmodDir + "/wireguard.ko"),
+		Installed:     exists(kmodDir + "/wgobfs-swap.sh"),
+		Fits:          exists(kmodDir + "/wireguard.ko"), // link to the module picked for this firmware
 		NdmcAvailable: ndmcBinary() != "",
 		Tunnels:       []KmodTunnel{},
 		LastLog:       []string{},
@@ -165,12 +166,11 @@ func kmodStatus() KmodStatus {
 	case exists("/sys/module/wireguard/parameters/genl_id"):
 		st.Module = "patched"
 	default:
-		st.Module = "other"
-	}
-	st.Srcversion = readTrim("/sys/module/wireguard/srcversion")
-	if st.Srcversion == stockSrc {
+		// Without the genl_id parameter it is the firmware's own module,
+		// whatever its revision.
 		st.Module = "stock"
 	}
+	st.Srcversion = readTrim("/sys/module/wireguard/srcversion")
 	if out, err := run(3*time.Second, kmodDir+"/genlid", "wireguard"); err == nil {
 		st.GenlID, _ = strconv.Atoi(strings.TrimSpace(out))
 	}

@@ -576,7 +576,7 @@ async function refreshKmod() {
 }
 
 function renderKmod(k) {
-  const mod = { patched: ['ok', 'с обфускатором'], stock: ['warn', 'стандартный'], none: ['bad', 'не загружен'], other: ['warn', 'неизвестный'] }[k.module] || ['', k.module];
+  const mod = { patched: ['ok', 'с обфускатором'], stock: ['warn', 'стандартный'], none: ['bad', 'не загружен'] }[k.module] || ['', k.module];
   $('#km-module').replaceChildren(h('span', { class: 'tag ' + mod[0] }, mod[1]));
   const auto = { enabled: 'включён', disabled: 'выключен', none: 'не установлен' }[k.autostart] || '—';
   $('#km-auto').textContent = auto;
@@ -585,15 +585,16 @@ function renderKmod(k) {
   $('#km-kernel').textContent = k.autostart === 'none' ? '—' : k.kernelMatch ? 'совпадает' : 'другое';
 
   const warn = [];
-  if (!k.installed) warn.push('Модуль не установлен: распакуйте комплект wgobfs и выполните install.sh.');
-  if (k.installed && !k.kernelMatch && k.autostart !== 'none') warn.push('Ядро отличается от того, для которого включён автозапуск (обновление прошивки?). Подмена при загрузке пропускается; модуль может не подойти к новой прошивке.');
+  if (!k.installed) warn.push('Модуль не установлен: поставьте пакет wgobfs-kmod (github.com/artt652/keenetic-wgobfs).');
+  else if (!k.fits) warn.push('В пакете wgobfs-kmod нет модуля для этой прошивки: стандартный модуль WireGuard отличается от известных сборок. Туннели в режиме «авто» работают через внешний обфускатор.');
+  if (k.installed && k.fits && !k.kernelMatch && k.autostart !== 'none') warn.push('Ядро отличается от того, для которого включён автозапуск (обновление прошивки?). Подмена при загрузке пропускается; модуль может не подойти к новой прошивке.');
   if (k.autostart === 'disabled' && k.disabledReason) warn.push('Автозапуск выключен: ' + k.disabledReason);
   if (k.pending) warn.push('Идёт подмена модуля или она не завершилась.');
   if (k.error) warn.push(k.error);
   $('#km-banner').hidden = !warn.length;
   $('#km-banner').textContent = warn.join(' ');
 
-  $('#km-swap').hidden = !(k.installed && k.module !== 'patched');
+  $('#km-swap').hidden = !(k.installed && k.fits && k.module !== 'patched');
   $('#km-auto-on').hidden = k.autostart !== 'disabled';
   $('#km-auto-off').hidden = k.autostart !== 'enabled';
   $('#km-log').textContent = k.lastLog.join('\n');
