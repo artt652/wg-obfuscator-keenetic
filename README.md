@@ -23,7 +23,11 @@ Keenetic с Entware, с веб-панелью управления.
 
 ## Установка из репозитория
 
+opkg в Entware по умолчанию скачивает через busybox `wget`, а он не умеет HTTPS (ошибка
+`not an http or ftp url`). Сначала поставьте wget с TLS и корневые сертификаты:
+
 ```sh
+opkg update && opkg install wget-ssl ca-certificates
 ARCH=mipsel-3.4   # ваша архитектура
 echo "src/gz wg-obfuscator https://artt652.github.io/wg-obfuscator-keenetic/$ARCH" >> /opt/etc/opkg.conf
 opkg update
