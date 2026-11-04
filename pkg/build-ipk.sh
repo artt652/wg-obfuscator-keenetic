@@ -5,8 +5,8 @@
 set -eu
 
 OBF_VER=1.6
-PKG_REL=4
-PANEL_VER=1.2.0
+PKG_REL=6
+PANEL_VER=1.4.0
 PKG=wg-obfuscator-keenetic
 VERSION="${OBF_VER}-${PKG_REL}"
 
@@ -67,7 +67,8 @@ License: GPL-3.0
 URL: https://github.com/artt652/wg-obfuscator-keenetic
 Description: WireGuard Obfuscator v${OBF_VER} by ClusterM with a web panel
  for Keenetic routers (Entware). Panel ${PANEL_VER}: settings form, import of
- the server config, start/stop/restart, log viewer, WireGuard status and MTU.
+ the server config, start/stop/restart, log viewer, WireGuard status and MTU,
+ built-in obfuscator page (patched wireguard.ko, I5) and AmneziaWG .conf export.
 CTRL
 	install -m 0755 "$HERE/control/preinst"  "$WORK/ctrl/preinst"
 	install -m 0755 "$HERE/control/postinst" "$WORK/ctrl/postinst"

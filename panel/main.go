@@ -21,6 +21,8 @@ import (
 
 var panelVersion = "dev"
 
+const defaultObfConfig = "/opt/etc/wg-obfuscator.conf"
+
 //go:embed web
 var webFS embed.FS
 
@@ -38,7 +40,7 @@ type Settings struct {
 func loadSettings(path string) (*Settings, error) {
 	s := &Settings{
 		Listen:     "0.0.0.0:8090",
-		ObfConfig:  "/opt/etc/wg-obfuscator.conf",
+		ObfConfig:  defaultObfConfig,
 		ObfInit:    "/opt/etc/init.d/S99wg-obfuscator",
 		ObfBin:     "/opt/bin/wg-obfuscator",
 		DefaultLog: "/opt/var/log/wg-obfuscator.log",
@@ -139,7 +141,30 @@ func main() {
 	initFlag := flag.Bool("init", false, "create the settings file with a random password if it is missing, then exit")
 	passwd := flag.String("passwd", "", "set a new panel password, then exit")
 	showVer := flag.Bool("version", false, "print version and exit")
+	awgIn := flag.String("awgconf", "", "convert a wg-obfuscator client config (obfuscator section + WireGuard config) to an AmneziaWG .conf for the built-in obfuscator, print it and exit; - reads stdin")
 	flag.Parse()
+
+	if *awgIn != "" {
+		var b []byte
+		var err error
+		if *awgIn == "-" {
+			b, err = io.ReadAll(os.Stdin)
+		} else {
+			b, err = os.ReadFile(*awgIn)
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		res, err := ConvertToAWG(string(b), DefaultAWGOptions())
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, n := range res.Notes {
+			fmt.Fprintln(os.Stderr, "note:", n)
+		}
+		fmt.Print(res.Conf)
+		return
+	}
 
 	if *showVer {
 		fmt.Println("wg-obfuscator-panel", panelVersion)
@@ -245,6 +270,13 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /api/mtu", a.auth(a.mtu))
 	mux.HandleFunc("POST /api/reconnect", a.auth(a.reconnect))
 	mux.HandleFunc("POST /api/password", a.auth(a.changePassword))
+	mux.HandleFunc("GET /api/kmod", a.auth(a.kmodGet))
+	mux.HandleFunc("POST /api/kmod/enable", a.auth(a.kmodEnable))
+	mux.HandleFunc("POST /api/kmod/disable", a.auth(a.kmodDisable))
+	mux.HandleFunc("POST /api/kmod/autostart", a.auth(a.kmodAutostart))
+	mux.HandleFunc("POST /api/kmod/swap", a.auth(a.kmodSwap))
+	mux.HandleFunc("POST /api/kmod/convert", a.auth(a.kmodConvert))
+	mux.HandleFunc("POST /api/kmod/mode", a.auth(a.kmodMode))
 	return secHeaders(mux)
 }
 
@@ -459,6 +491,9 @@ func (a *App) saveConfig(w http.ResponseWriter, r *http.Request) {
 	for _, in := range req.Instances {
 		in.Masking = strings.ToUpper(strings.TrimSpace(in.Masking))
 		in.Verbose = normVerbose(in.Verbose)
+		if in.Verbose == "NONE" { // logging off: the service discards stdout
+			in.Verbose, in.LogFile = "ERROR", ""
+		}
 		in.LogTimestamps = strings.ToUpper(strings.TrimSpace(in.LogTimestamps))
 		var sb []string
 		for _, b := range in.StaticBindings {
@@ -519,7 +554,7 @@ func (a *App) apply(w http.ResponseWriter, text string, restart bool) {
 		return
 	}
 	if !restart {
-		writeJSON(w, 200, map[string]any{"ok": true, "restarted": false})
+		writeJSON(w, 200, map[string]any{"ok": true, "restarted": false, "tunnels": kmodReapply()})
 		return
 	}
 	out, _ := serviceAction(a.st.ObfInit, "restart")
@@ -527,7 +562,7 @@ func (a *App) apply(w http.ResponseWriter, text string, restart bool) {
 	// moment, then require it to still be alive.
 	time.Sleep(1500 * time.Millisecond)
 	if len(findProcs("wg-obfuscator")) > 0 {
-		writeJSON(w, 200, map[string]any{"ok": true, "restarted": true, "output": out})
+		writeJSON(w, 200, map[string]any{"ok": true, "restarted": true, "output": out, "tunnels": kmodReapply()})
 		return
 	}
 	// Failed: collect evidence, restore the previous file, start it again.
@@ -638,4 +673,82 @@ func (a *App) reconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "output": out})
+}
+
+// --- built-in obfuscator (patched wireguard.ko) ------------------------------
+
+func actionReply(w http.ResponseWriter, out string, err error) {
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error(), "output": out})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "output": out})
+}
+
+func (a *App) kmodGet(w http.ResponseWriter, r *http.Request) {
+	st := kmodStatus()
+	writeJSON(w, 200, map[string]any{"ok": true, "kmod": st})
+}
+
+func (a *App) kmodEnable(w http.ResponseWriter, r *http.Request) {
+	var req KmodApply
+	if err := readJSON(r, &req); err != nil {
+		errJSON(w, 400, "неверный запрос")
+		return
+	}
+	out, err := kmodEnable(req)
+	actionReply(w, out, err)
+}
+
+func (a *App) kmodDisable(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Iface, Endpoint string }
+	if err := readJSON(r, &req); err != nil {
+		errJSON(w, 400, "неверный запрос")
+		return
+	}
+	out, err := kmodDisable(req.Iface, req.Endpoint)
+	actionReply(w, out, err)
+}
+
+func (a *App) kmodAutostart(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Enable bool }
+	if err := readJSON(r, &req); err != nil {
+		errJSON(w, 400, "неверный запрос")
+		return
+	}
+	out, err := kmodAutostart(req.Enable)
+	actionReply(w, out, err)
+}
+
+func (a *App) kmodSwap(w http.ResponseWriter, r *http.Request) {
+	out, err := kmodSwap()
+	actionReply(w, out, err)
+}
+
+func (a *App) kmodConvert(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+		Jc   *int   `json:"jc"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		errJSON(w, 400, "неверный запрос")
+		return
+	}
+	opt := DefaultAWGOptions()
+	res, err := ConvertToAWG(req.Text, opt)
+	if err != nil {
+		errJSON(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "result": res})
+}
+
+func (a *App) kmodMode(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Iface, Mode, Section string }
+	if err := readJSON(r, &req); err != nil {
+		errJSON(w, 400, "неверный запрос")
+		return
+	}
+	out, err := kmodSetMode(req.Iface, req.Mode, req.Section)
+	actionReply(w, out, err)
 }

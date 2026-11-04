@@ -37,6 +37,7 @@
     <button role="tab" data-tab="overview" aria-selected="true">Обзор</button>
     <button role="tab" data-tab="settings" aria-selected="false">Настройки</button>
     <button role="tab" data-tab="log" aria-selected="false">Журнал</button>
+    <button role="tab" data-tab="kmod" aria-selected="false">Встроенный</button>
   </nav>
 
   <main>
@@ -111,19 +112,20 @@
             <div class="f">
               <label for="f-verbose">Уровень журнала</label>
               <select id="f-verbose" data-k="verbose">
-                <option value="">INFO (по умолчанию)</option>
-                <option value="ERROR">ERROR</option>
+                <option value="NONE">Выключен — журнал не ведётся</option>
+                <option value="ERROR">ERROR — только ошибки</option>
                 <option value="WARN">WARN</option>
                 <option value="INFO">INFO</option>
                 <option value="DEBUG">DEBUG</option>
                 <option value="TRACE">TRACE</option>
+                <option value="">не задан (INFO)</option>
               </select>
-              <small>ERROR или WARN — быстрее всего</small>
+              <small>Выключен или ERROR — меньше всего нагрузки и записи на накопитель</small>
             </div>
             <div class="f full">
               <label for="f-logFile">Файл журнала</label>
               <input id="f-logFile" data-k="logFile" placeholder="/opt/var/log/wg-obfuscator.log">
-              <small>Без файла журнал не сохраняется: служба отбрасывает вывод</small>
+              <small>Пусто — журнал не ведётся: служба отбрасывает вывод</small>
             </div>
           </div>
 
@@ -217,6 +219,41 @@
       <p id="log-path" class="muted small"></p>
       <pre id="log-box" class="log" tabindex="0"></pre>
     </section>
+    <!-- Built-in obfuscator (patched wireguard.ko) -->
+    <section id="tab-kmod" class="tab" hidden>
+      <p class="muted small">Обфускатор внутри модуля WireGuard: туннель идёт прямо на сервер wg-obfuscator, без отдельного процесса на роутере. Включается параметром I5 туннеля.</p>
+      <div id="km-banner" class="banner" hidden></div>
+      <div class="grid stats">
+        <div class="stat"><div class="stat-label">Модуль</div><div class="stat-value" id="km-module">—</div></div>
+        <div class="stat"><div class="stat-label">Автозапуск</div><div class="stat-value" id="km-auto">—</div></div>
+        <div class="stat"><div class="stat-label">Netlink id</div><div class="stat-value" id="km-genl">—</div></div>
+        <div class="stat"><div class="stat-label">Ядро</div><div class="stat-value" id="km-kernel">—</div></div>
+      </div>
+      <div class="wg-actions">
+        <button class="btn" id="km-swap">Загрузить модуль сейчас</button>
+        <button class="btn" id="km-auto-on">Включить автозапуск</button>
+        <button class="btn ghost" id="km-auto-off">Выключить автозапуск</button>
+      </div>
+      <details class="more" id="km-log-box"><summary>Журнал последней подмены</summary><pre id="km-log" class="log"></pre></details>
+
+      <h2>Туннели</h2>
+      <div id="km-tunnels" class="cards"></div>
+
+      <h2>Конфиг для импорта в KeeneticOS</h2>
+      <div class="panel">
+        <p class="muted small">Вставьте конфиг клиента от сервера (секция обфускатора <span class="mono">[main]</span> и конфиг WireGuard, в любом порядке). Получится файл AmneziaWG: endpoint — сервер обфускатора, I5 включает встроенный обфускатор. Его можно загрузить в веб-интерфейсе роутера: «Другие подключения» → WireGuard → «Загрузить из файла».</p>
+        <textarea id="km-conv-in" class="code" rows="10" spellcheck="false" placeholder="[main]&#10;target = 203.0.113.5:17379&#10;key = ...&#10;masking = STUN&#10;&#10;[Interface]&#10;PrivateKey = ...&#10;&#10;[Peer]&#10;..."></textarea>
+        <div class="form-foot"><button class="btn primary" id="km-conv-do">Сделать .conf</button><span id="km-conv-msg" class="muted small"></span></div>
+        <div id="km-conv-out" hidden>
+          <textarea id="km-conv-text" class="code" rows="14" spellcheck="false" readonly></textarea>
+          <div class="form-foot">
+            <label class="inline">Имя файла <input id="km-conv-name" value="wgobfs.conf" class="fname"></label>
+            <button class="btn" id="km-conv-dl">Скачать</button>
+            <button class="btn ghost" id="km-conv-copy">Копировать</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="foot muted small" id="foot"></footer>
@@ -232,6 +269,42 @@
     <div class="dlg-foot">
       <button value="cancel" class="btn ghost">Отмена</button>
       <button id="import-do" value="default" class="btn primary">Подставить</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-kmod">
+  <form method="dialog" class="dlg" id="km-form">
+    <h3 id="km-dlg-title">Встроенный обфускатор</h3>
+    <p class="muted small">Те же ключ и маскировка, что на сервере. Адрес сервера — обфускатор на VPS (target), не WireGuard.</p>
+    <div class="fields">
+      <div class="f full">
+        <label for="km-key">Ключ</label>
+        <div class="with-btn">
+          <input id="km-key" type="password" autocomplete="off" spellcheck="false" required>
+          <button type="button" class="btn ghost" id="km-key-show">Показать</button>
+        </div>
+      </div>
+      <div class="f">
+        <label for="km-masking">Маскировка</label>
+        <select id="km-masking"><option value="STUN">STUN</option><option value="NONE">NONE</option></select>
+      </div>
+      <div class="f">
+        <label for="km-dummy">max-dummy, байт</label>
+        <input id="km-dummy" type="number" min="0" max="1024" value="4">
+      </div>
+      <div class="f full">
+        <label for="km-endpoint">Адрес сервера обфускатора</label>
+        <input id="km-endpoint" placeholder="203.0.113.5:17379" spellcheck="false">
+        <small>Пусто — endpoint не менять</small>
+      </div>
+    </div>
+    <button type="button" class="btn ghost" id="km-from-obf">Взять из настроек обфускатора</button>
+    <p id="km-dlg-err" class="err"></p>
+    <pre id="km-dlg-out" class="log" hidden></pre>
+    <div class="dlg-foot">
+      <button value="cancel" class="btn ghost">Отмена</button>
+      <button id="km-apply" value="default" class="btn primary">Применить</button>
     </div>
   </form>
 </dialog>

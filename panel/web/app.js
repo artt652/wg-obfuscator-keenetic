@@ -107,6 +107,7 @@ function selectTab(name) {
   if (name === 'overview') refreshStatus();
   if (name === 'log') refreshLog(true);
   if (name === 'settings' && !cfg.loaded) loadConfig();
+  if (name === 'kmod') refreshKmod();
 }
 
 // ---------------------------------------------------------------- status
@@ -300,7 +301,7 @@ async function loadConfig() {
 }
 
 function newInstance(name) {
-  return { name, sourceIf: '127.0.0.1', sourceLport: '', target: '', key: '', masking: 'STUN', verbose: 'WARN',
+  return { name, sourceIf: '127.0.0.1', sourceLport: '', target: '', key: '', masking: 'STUN', verbose: 'ERROR',
     logFile: cfg.defaultLog, logTimestamps: '', maxClients: '', idleTimeout: '', inTimeout: '', maxDummy: '',
     fwmark: '', resolveInterval: '', allowClean: false, staticBindings: [], extra: [] };
 }
@@ -338,6 +339,8 @@ $('#btn-del-inst').addEventListener('click', () => {
 
 function fillForm() {
   const inst = cfg.instances[cfg.cur];
+  // No log file means no log at all: show it as "logging off".
+  if (!inst.logFile) inst.verbose = 'NONE';
   for (const el of $$('[data-k]', $('#inst-form'))) {
     const k = el.dataset.k;
     if (el.type === 'checkbox') el.checked = !!inst[k];
@@ -356,6 +359,16 @@ $('#inst-form').addEventListener('input', (e) => {
   else if (k === 'staticBindings') inst[k] = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
   else inst[k] = el.value.trim();
   cfg.dirty = true;
+  if (k === 'verbose') {
+    if (inst.verbose === 'NONE') inst.logFile = '';
+    else if (!inst.logFile) inst.logFile = cfg.defaultLog;
+    $('#f-logFile').value = inst.logFile;
+  }
+  if (k === 'logFile') {
+    if (!inst.logFile) inst.verbose = 'NONE';
+    else if (inst.verbose === 'NONE') inst.verbose = 'ERROR';
+    $('#f-verbose').value = inst.verbose;
+  }
   if (k === 'name') renderInstTabs();
   const f = el.closest('.f');
   if (f && f.classList.contains('invalid')) { f.classList.remove('invalid'); f.querySelector('.fe')?.remove(); }
@@ -434,14 +447,14 @@ async function save(restart) {
     cfg.errors = r.fieldErrors || [];
     if (cfg.mode === 'form') { renderInstTabs(); markErrors(); }
     if (r.ok) {
-      showMsg(restart ? 'Сохранено, обфускатор перезапущен.' : 'Сохранено. Изменения вступят в силу после перезапуска.', false);
+      showMsg((restart ? 'Сохранено, обфускатор перезапущен.' : 'Сохранено. Изменения вступят в силу после перезапуска.') + (/endpoint|-> internal|asc/.test(r.tunnels || '') ? '\nТуннели обновлены по новым настройкам.' : ''), false, /endpoint|asc|ERROR|rejected/.test(r.tunnels || '') ? r.tunnels : '');
       cfg.loaded = false;
       const keepMode = cfg.mode, keepCur = cfg.cur;
       await loadConfig();
       cfg.cur = Math.min(keepCur, cfg.instances.length - 1);
       renderInstTabs(); fillForm();
       setMode(keepMode);
-      showMsg(restart ? 'Сохранено, обфускатор перезапущен.' : 'Сохранено. Изменения вступят в силу после перезапуска.', false);
+      showMsg((restart ? 'Сохранено, обфускатор перезапущен.' : 'Сохранено. Изменения вступят в силу после перезапуска.') + (/endpoint|-> internal|asc/.test(r.tunnels || '') ? '\nТуннели обновлены по новым настройкам.' : ''), false, /endpoint|asc|ERROR|rejected/.test(r.tunnels || '') ? r.tunnels : '');
     } else if (cfg.errors.length) {
       const list = cfg.errors.map((e) => `• ${e.instance ? '[' + e.instance + '] ' : ''}${e.msg}`).join('\n');
       showMsg((r.error || 'Ошибки в настройках') + ':\n' + list, true);
@@ -486,8 +499,8 @@ $('#import-do').addEventListener('click', async (e) => {
       if (Array.isArray(v) ? v.length : (v !== '' && v !== false && v != null)) out[k] = v;
     }
     if (!src.sourceIf) out.sourceIf = (base && base.sourceIf) || '127.0.0.1';
-    if (!src.logFile) out.logFile = (base && base.logFile) || cfg.defaultLog;
-    if (!src.verbose && !(base && base.verbose)) out.verbose = 'WARN';
+    if (!src.logFile) out.logFile = base ? base.logFile : cfg.defaultLog;
+    if (!src.verbose) out.verbose = base ? base.verbose : 'ERROR';
     if (base) out.name = base.name;
     return out;
   };
@@ -547,6 +560,223 @@ $('#btn-log-clear').addEventListener('click', async () => {
   refreshLog(true);
 });
 
+// ---------------------------------------------------------------- built-in obfuscator
+
+let kmodLast = null;
+let kmodBusy = false;
+
+async function refreshKmod() {
+  if (kmodBusy) return;
+  try {
+    const r = await api('/api/kmod');
+    if (!r.ok) return;
+    kmodLast = r.kmod;
+    renderKmod(r.kmod);
+  } catch { /* auth handled */ }
+}
+
+function renderKmod(k) {
+  const mod = { patched: ['ok', 'с обфускатором'], stock: ['warn', 'стандартный'], none: ['bad', 'не загружен'], other: ['warn', 'неизвестный'] }[k.module] || ['', k.module];
+  $('#km-module').replaceChildren(h('span', { class: 'tag ' + mod[0] }, mod[1]));
+  const auto = { enabled: 'включён', disabled: 'выключен', none: 'не установлен' }[k.autostart] || '—';
+  $('#km-auto').textContent = auto;
+  $('#km-auto').title = k.disabledReason || '';
+  $('#km-genl').textContent = k.genlId || '—';
+  $('#km-kernel').textContent = k.autostart === 'none' ? '—' : k.kernelMatch ? 'совпадает' : 'другое';
+
+  const warn = [];
+  if (!k.installed) warn.push('Модуль не установлен: распакуйте комплект wgobfs и выполните install.sh.');
+  if (k.installed && !k.kernelMatch && k.autostart !== 'none') warn.push('Ядро отличается от того, для которого включён автозапуск (обновление прошивки?). Подмена при загрузке пропускается; модуль может не подойти к новой прошивке.');
+  if (k.autostart === 'disabled' && k.disabledReason) warn.push('Автозапуск выключен: ' + k.disabledReason);
+  if (k.pending) warn.push('Идёт подмена модуля или она не завершилась.');
+  if (k.error) warn.push(k.error);
+  $('#km-banner').hidden = !warn.length;
+  $('#km-banner').textContent = warn.join(' ');
+
+  $('#km-swap').hidden = !(k.installed && k.module !== 'patched');
+  $('#km-auto-on').hidden = k.autostart !== 'disabled';
+  $('#km-auto-off').hidden = k.autostart !== 'enabled';
+  $('#km-log').textContent = k.lastLog.join('\n');
+  $('#km-log-box').hidden = !k.lastLog.length;
+
+  const box = $('#km-tunnels');
+  // Do not rebuild the cards under a select the user is working with.
+  if (box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return;
+  const list = k.tunnels.filter((t) => t.enabled || t.wgobfs || t.mode);
+  const modeName = { auto: 'авто', internal: 'встроенный', external: 'внешний' };
+  const cards = list.map((t) => {
+    const title = t.description || t.id;
+    const state = !t.enabled ? ['bad', 'выключен'] : t.online ? ['ok', 'на связи'] : t.connected ? ['warn', 'нет рукопожатия'] : ['warn', 'нет связи'];
+    let mode;
+    if (t.mode && t.effective === 'internal' && k.module !== 'patched') {
+      mode = h('span', { class: 'tag warn', title: 'Режим «встроенный», но модуль с обфускатором не загружен — туннель не подключится' }, 'встроенный, но модуль стандартный');
+    } else if (t.mode) {
+      mode = h('span', { class: 'tag accent', title: 'Режим ' + modeName[t.mode] + ', секция «' + t.section + '»' },
+        (t.effective === 'internal' ? 'встроенный обфускатор' : 'внешний обфускатор') + (t.mode === 'auto' ? ' (авто)' : ''));
+    } else if (!t.wgobfs) mode = h('span', { class: 'tag' }, 'обычный WireGuard');
+    else if (k.module !== 'patched') mode = h('span', { class: 'tag warn', title: 'I5 задан, но загружен стандартный модуль' }, 'I5 задан, модуль стандартный');
+    else mode = h('span', { class: 'tag accent' }, `обфускатор: ${t.masking}, dummy ${t.maxDummy}` + (t.kernelMode === 'off' ? ' (в модуле выкл.)' : ''));
+
+    let modeRow = null;
+    if (k.modeTool && k.ndmcAvailable && k.sections.length) {
+      const sel = kmodPick[t.id] || { mode: t.mode || '', section: t.section || t.suggested || k.sections[0].name };
+      const mSel = h('select', { 'aria-label': 'Режим', onchange: (e) => { sel.mode = e.target.value; kmodPick[t.id] = sel; } },
+        [['', 'не управлять'], ['auto', 'авто'], ['internal', 'встроенный'], ['external', 'внешний']]
+          .map(([v, l]) => h('option', { value: v, selected: v === sel.mode }, l)));
+      const sSel = h('select', { 'aria-label': 'Секция обфускатора', onchange: (e) => { sel.section = e.target.value; kmodPick[t.id] = sel; } },
+        k.sections.map((s) => h('option', { value: s.name, selected: s.name === sel.section }, `${s.name} (:${s.port} → ${s.target})`)));
+      modeRow = h('div', { class: 'wg-actions mode-row' },
+        h('div', null, h('label', null, 'Режим'), mSel),
+        h('div', { class: 'grow' }, h('label', null, 'Секция обфускатора'), sSel),
+        h('button', { class: 'btn primary', onclick: () => setTunnelMode(t, sel) }, 'Применить'));
+    }
+    return h('div', { class: 'card' },
+      h('div', { class: 'card-head' },
+        h('span', { class: 'card-title' }, title),
+        h('span', { class: 'card-sub mono' }, [t.id, t.kernel].filter((x) => x && x !== title).join(' · ')),
+        h('span', { class: 'tag ' + state[0] }, state[1]), mode),
+      h('dl', { class: 'kv' },
+        h('dt', null, 'Endpoint'), h('dd', null, t.endpoint || '—'),
+        h('dt', null, 'Рукопожатие'), h('dd', null, t.handshakeAgo >= 0 ? fmt.dur(t.handshakeAgo) + ' назад' : 'не было'),
+        h('dt', null, 'Принято / отправлено'), h('dd', null, fmt.bytes(t.rxBytes) + ' / ' + fmt.bytes(t.txBytes))),
+      modeRow,
+      k.ndmcAvailable && !t.mode ? h('div', { class: 'wg-actions' },
+        h('button', { class: 'btn', onclick: () => openKmodDialog(t) }, t.wgobfs ? 'Изменить вручную' : 'Включить вручную'),
+        t.wgobfs && h('button', { class: 'btn ghost danger', onclick: () => disableKmod(t) }, 'Выключить')) : null);
+  });
+  if (!cards.length) cards.push(h('p', { class: 'muted' }, 'Включённых туннелей WireGuard нет.'));
+  if (k.modeTool && !k.sections.length) cards.unshift(h('p', { class: 'muted small' }, 'Режимы «авто / встроенный / внешний» берут ключ и сервер из секции локального обфускатора — добавьте её на вкладке «Настройки».'));
+  box.replaceChildren(...cards);
+}
+
+const kmodPick = {};
+
+async function setTunnelMode(t, sel) {
+  const title = t.description || t.id;
+  const what = { '': 'перестать управлять режимом', auto: 'включить режим «авто»', internal: 'включить встроенный обфускатор', external: 'перейти на внешний обфускатор' }[sel.mode];
+  const r = await kmodAction('/api/kmod/mode', { iface: t.id, mode: sel.mode || 'off', section: sel.section },
+    `«${title}»: готово`, `«${title}»: ${what}? Связь через туннель может прерваться на несколько секунд.`);
+  if (r) {
+    delete kmodPick[t.id];
+    if (!r.ok && r.output) $('#km-log').textContent = r.output;
+  }
+}
+
+async function kmodAction(path, body, okMsg, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return null;
+  kmodBusy = true;
+  toast('Выполняю…');
+  try {
+    const r = await api(path, body);
+    toast(r.ok ? okMsg : (r.error || 'Ошибка'), !r.ok);
+    return r;
+  } finally {
+    kmodBusy = false;
+    setTimeout(refreshKmod, 1500);
+  }
+}
+
+$('#km-swap').addEventListener('click', () => kmodAction('/api/kmod/swap', {}, 'Модуль загружен',
+  'Заменить модуль WireGuard сейчас? Все туннели WireGuard прервутся на несколько секунд.'));
+$('#km-auto-on').addEventListener('click', () => kmodAction('/api/kmod/autostart', { enable: true }, 'Автозапуск включён'));
+$('#km-auto-off').addEventListener('click', () => kmodAction('/api/kmod/autostart', { enable: false }, 'Автозапуск выключен'));
+
+async function disableKmod(t) {
+  const ep = prompt(`Выключить встроенный обфускатор на «${t.description || t.id}»?\n\nЕсли туннель должен снова идти через локальный обфускатор, укажите его endpoint (например 127.0.0.1:13255). Пусто — endpoint не менять.`, '');
+  if (ep === null) return;
+  await kmodAction('/api/kmod/disable', { iface: t.id, endpoint: ep.trim() }, 'Обфускатор выключен');
+}
+
+let kmodTarget = null;
+function openKmodDialog(t) {
+  kmodTarget = t;
+  $('#km-dlg-title').textContent = 'Встроенный обфускатор: ' + (t.description || t.id);
+  $('#km-key').value = t.key || '';
+  $('#km-key').type = 'password';
+  $('#km-key-show').textContent = 'Показать';
+  $('#km-masking').value = t.masking || 'STUN';
+  $('#km-dummy').value = t.wgobfs ? t.maxDummy : 4;
+  const ep = t.endpoint || '';
+  $('#km-endpoint').value = /^127\.|^localhost/.test(ep) ? '' : (t.wgobfs ? ep : '');
+  $('#km-dlg-err').textContent = '';
+  $('#km-dlg-out').hidden = true;
+  $('#dlg-kmod').showModal();
+}
+
+$('#km-key-show').addEventListener('click', () => {
+  const k = $('#km-key');
+  k.type = k.type === 'password' ? 'text' : 'password';
+  $('#km-key-show').textContent = k.type === 'password' ? 'Показать' : 'Скрыть';
+});
+
+$('#km-from-obf').addEventListener('click', async () => {
+  const r = await api('/api/config');
+  const list = (r.ok && r.instances) || [];
+  if (!list.length) return toast('В настройках обфускатора нет секций', true);
+  // Prefer the section whose local port is this tunnel's current endpoint port.
+  const port = kmodTarget && kmodTarget.endpoint ? kmodTarget.endpoint.split(':').pop() : '';
+  const inst = list.find((i) => i.sourceLport === port) || list[0];
+  $('#km-key').value = inst.key || '';
+  const m = (inst.masking || '').toUpperCase();
+  $('#km-masking').value = m === 'NONE' || m === 'AUTO' || !m ? 'NONE' : 'STUN';
+  if (inst.maxDummy) $('#km-dummy').value = inst.maxDummy;
+  $('#km-endpoint').value = inst.target || '';
+  toast('Взято из секции «' + inst.name + '»');
+});
+
+$('#km-apply').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const body = {
+    iface: kmodTarget.id,
+    key: $('#km-key').value,
+    masking: $('#km-masking').value,
+    maxDummy: parseInt($('#km-dummy').value, 10) || 0,
+    endpoint: $('#km-endpoint').value.trim(),
+  };
+  const btn = $('#km-apply');
+  btn.disabled = true;
+  $('#km-dlg-err').textContent = '';
+  kmodBusy = true;
+  try {
+    const r = await api('/api/kmod/enable', body);
+    if (r.ok) {
+      $('#dlg-kmod').close();
+      toast('Обфускатор включён на «' + (kmodTarget.description || kmodTarget.id) + '»');
+    } else {
+      $('#km-dlg-err').textContent = r.error || 'Ошибка';
+      if (r.output) { $('#km-dlg-out').textContent = r.output; $('#km-dlg-out').hidden = false; }
+    }
+  } finally {
+    btn.disabled = false;
+    kmodBusy = false;
+    setTimeout(refreshKmod, 2000);
+  }
+});
+
+$('#km-conv-do').addEventListener('click', async () => {
+  $('#km-conv-msg').textContent = '';
+  const r = await api('/api/kmod/convert', { text: $('#km-conv-in').value });
+  if (!r.ok) { $('#km-conv-out').hidden = true; $('#km-conv-msg').textContent = r.error || 'Ошибка'; return; }
+  const res = r.result;
+  $('#km-conv-text').value = res.conf;
+  $('#km-conv-out').hidden = false;
+  if (res.name && res.name !== 'main') $('#km-conv-name').value = res.name.replace(/[^\w.-]+/g, '_') + '.conf';
+  $('#km-conv-msg').textContent = `Сервер ${res.endpoint}, маскировка ${res.masking}, dummy ${res.maxDummy}` + ((res.notes || []).length ? ' · ' + res.notes.join(' · ') : '');
+});
+
+$('#km-conv-dl').addEventListener('click', () => {
+  const blob = new Blob([$('#km-conv-text').value], { type: 'text/plain' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: $('#km-conv-name').value || 'wgobfs.conf' });
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+});
+
+$('#km-conv-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#km-conv-text').value); toast('Скопировано'); }
+  catch { $('#km-conv-text').select(); document.execCommand('copy'); toast('Скопировано'); }
+});
+
 // ---------------------------------------------------------------- polling
 
 let timer = null;
@@ -560,6 +790,7 @@ function startPolling() {
     if (activeTab === 'overview' && tick % 2 === 0) refreshStatus();
     if (activeTab === 'log' && $('#log-follow').checked) refreshLog(false);
     if (activeTab === 'settings' && tick % 5 === 0) refreshStatus();
+    if (activeTab === 'kmod' && tick % 3 === 0 && !$('#dlg-kmod').open) refreshKmod();
   }, 3000);
 }
 

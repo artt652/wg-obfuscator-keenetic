@@ -199,3 +199,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .off-list ul { list-style: none; margin: 10px 0 0; padding: 0; }
 .off-list li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 8px 0; border-top: 1px dashed var(--line); }
 .off-name { font-weight: 600; }
+.fname { width: 14em; margin-left: 8px; }
+#tab-kmod .wg-actions { margin-bottom: 4px; }
+.mode-row .grow { flex: 1 1 16em; }
+.mode-row select { min-width: 9em; }

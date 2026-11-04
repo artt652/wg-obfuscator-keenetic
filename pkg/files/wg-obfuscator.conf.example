@@ -3,6 +3,7 @@
 #   /opt/etc/init.d/S99wg-obfuscator restart
 #
 # verbose accepts ERROR, WARN, INFO, DEBUG, TRACE (not WARNINGS/ERRORS).
+# Without log-file nothing is logged at all (the service discards output).
 # in-timeout must be greater than 0 or left out.
 # '#' starts a comment anywhere on a line, so keys cannot contain '#' or '='.
 
@@ -12,5 +13,5 @@ source-lport = 13255
 # target = IP_VPS:PORT
 # key = KEY_FROM_SERVER
 masking = STUN
-verbose = WARN
+verbose = ERROR
 log-file = /opt/var/log/wg-obfuscator.log
